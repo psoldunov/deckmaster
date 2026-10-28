@@ -6,7 +6,7 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/muesli/deckmaster/build.yml?branch=master&style=for-the-badge)](https://github.com/muesli/deckmaster/actions)
 [![Go ReportCard](https://goreportcard.com/badge/github.com/muesli/deckmaster?style=for-the-badge)](https://goreportcard.com/report/muesli/deckmaster)
 
-An application to control your Elgato Stream Deck on Linux
+An application to control your Elgato Stream Deck on Linux and macOS
 
 ## Features
 
@@ -38,6 +38,16 @@ An application to control your Elgato Stream Deck on Linux
 - [Packages](https://github.com/muesli/deckmaster/releases) in Alpine, Debian & RPM formats
 - [Binaries](https://github.com/muesli/deckmaster/releases) for various architectures
 
+### Nix
+
+This repository is a flake for x86_64-linux, aarch64-linux and aarch64-darwin:
+
+    nix run github:psoldunov/deckmaster -- -deck path/to/main.deck
+
+`packages.<system>.default` is the package, and `overlays.default` replaces
+`pkgs.deckmaster` with it. `nix develop` opens a shell with Go, gopls and
+golangci-lint.
+
 ### From source
 
 Make sure you have a working Go environment (Go 1.17 or higher is required).
@@ -48,6 +58,11 @@ To install deckmaster, simply run:
     git clone https://github.com/muesli/deckmaster.git
     cd deckmaster
     go build
+
+deckmaster draws its text in Roboto. On macOS it only looks for the font in
+`~/Library/Fonts`, `/Library/Fonts` and `/System/Library/Fonts`, so install
+Roboto there before running a binary built with `go build`. The Nix package
+points the binary at Roboto in the Nix store instead.
 
 ## System Setup
 
@@ -109,6 +124,39 @@ Then enable and start the `streamdeck.path` unit:
 systemctl --user enable streamdeck.path
 systemctl --user start streamdeck.path
 ```
+
+### macOS
+
+macOS needs no device rules. Quit Elgato's Stream Deck app first, since the two
+can't drive the deck at the same time.
+
+`keycode` and `paste` actions post keyboard events, which macOS drops until
+deckmaster is allowed in System Settings → Privacy & Security → Accessibility.
+deckmaster logs a warning at startup while that permission is missing, and
+another line for every key it can't post. The permission belongs to the
+process macOS holds responsible: the terminal app when you start deckmaster
+from a terminal, and the deckmaster binary itself when a launchd agent starts
+it.
+
+macOS ties the grant to that exact binary, so every rebuild loses it, and a
+Nix rebuild also moves the binary to a new store path. After each rebuild,
+remove the old entry from the Accessibility list and add the new binary, whose
+path `readlink -f "$(command -v deckmaster)"` prints.
+
+A few things work differently on macOS:
+
+- `keycode` takes the same key names and numbers as on Linux, translated to
+  Mac keys. `Leftmeta` and `Rightmeta` are Command, `Leftalt` and
+  `Rightalt` are Option, `Insert` is Help, and Print Screen, Scroll Lock and
+  Pause are F13 to F15, the way macOS maps a PC keyboard. `Playpause`,
+  `Nextsong`, `Previoussong`, `Volumeup`, `Volumedown`, `Mute` and the other
+  media keys act like the keys on an Apple keyboard. A key with no Mac
+  equivalent, such as 248 (`KEY_MICMUTE`), is logged and skipped.
+- `paste` presses Command-V instead of Ctrl-V.
+- `dbus` actions log that they aren't supported.
+- The `recentWindow` widget stays empty, since there is no X11.
+- The `gpu` and `vram` modes of the `top` widget and the `temp` widget read
+  Linux's sysfs, so on a Mac they draw an empty bar with a dash.
 
 ## Usage
 
@@ -266,7 +314,8 @@ There are four values for `mode`:
 
 `gpu` and `vram` read the amdgpu card with the most VRAM from
 `/sys/class/drm`, so they need Linux and an AMD GPU. When an integrated GPU
-sits beside a discrete one, that picks the discrete card.
+sits beside a discrete one, that picks the discrete card. Without an amdgpu
+card the bar is drawn empty.
 
 `mode` can hold several modes split on `;`, which share the key as columns
 side by side. `fillColor` splits the same way, one color per column in the same
