@@ -51,10 +51,10 @@ func (w *RecentWindowWidget) Update() error {
 	img := image.NewRGBA(image.Rect(0, 0, int(w.dev.Pixels), int(w.dev.Pixels)))
 
 	if int(w.window) < len(recentWindows) {
-		if w.lastID == recentWindows[w.window].ID {
+		id := recentWindows[w.window].ID
+		if w.lastID == id {
 			return nil
 		}
-		w.lastID = recentWindows[w.window].ID
 
 		var name string
 		if w.showTitle {
@@ -67,7 +67,12 @@ func (w *RecentWindowWidget) Update() error {
 
 		w.label = name
 		w.SetImage(recentWindows[w.window].Icon)
-		return w.ButtonWidget.Update()
+		// A window that did not reach the deck is drawn again next time.
+		if err := w.ButtonWidget.Update(); err != nil {
+			return err
+		}
+		w.lastID = id
+		return nil
 	}
 
 	return w.render(w.dev, img)

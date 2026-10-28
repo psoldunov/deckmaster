@@ -22,12 +22,17 @@ in
       ];
     };
 
-    vendorHash = "sha256-2g16lYPUF0CgRelxbRIV3pNoSDy3yZD+AlhBJSFvZgo=";
+    vendorHash = "sha256-QxdHDVQPqKiVvKCYQ3fFPzGm6nzvbeg0ZCB8jK1VBdc=";
 
     proxyVendor = true;
 
     # third_party/streamdeck is a module of its own, pulled in by a replace.
     subPackages = ["."];
+
+    # subPackages cannot reach that module's tests, so run them by import path.
+    postCheck = ''
+      go test github.com/muesli/streamdeck
+    '';
 
     # The binary looks for Roboto in the store itself instead of through a
     # wrapper that sets XDG_DATA_DIRS: go-findfont ignores that variable on

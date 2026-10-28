@@ -7,12 +7,11 @@ package streamdeck
 // IOService path. On Apple Silicon those paths run up against the 512-byte
 // io_string_t, IORegistryEntryGetPath fails, and every Stream Deck enumerates
 // with an empty path and is skipped. bearsh/hid keeps karalabe/hid's API on
-// hidapi 0.11, which names devices by registry entry ID instead.
+// hidapi 0.14, which names devices by registry entry ID instead, and whose
+// errors carry the IOReturn code; hidapi before 0.13 answered every macOS
+// failure with "hid_error is not implemented yet".
 import "github.com/bearsh/hid"
 
-type (
-	hidDevice     = hid.Device
-	hidDeviceInfo = hid.DeviceInfo
-)
+type hidDeviceInfo = hid.DeviceInfo
 
 var hidEnumerate = hid.Enumerate

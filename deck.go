@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -223,8 +224,9 @@ func (d *Deck) repeatInterval(index uint8) time.Duration {
 	return 0
 }
 
-// repeatAction triggers a key's action every interval until released closes.
-func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, released <-chan struct{}) {
+// repeatAction has the event loop trigger a key's action every interval until
+// released closes.
+func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, released <-chan struct{}, actions chan<- func()) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -232,8 +234,7 @@ func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, r
 		select {
 		case <-released:
 			return
-		default:
-			deck.triggerAction(dev, index, false)
+		case actions <- func() { deck.triggerAction(dev, index, false) }:
 		}
 
 		select {
@@ -242,6 +243,19 @@ func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, r
 		case <-ticker.C:
 		}
 	}
+}
+
+// deviceFailed handles an error from the Stream Deck and reports whether the
+// deck is gone. A deck that is gone stops deckmaster, so its service manager
+// starts it again once the deck is back; any other failure is logged and
+// deckmaster carries on.
+func deviceFailed(err error) bool {
+	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if errors.Is(err, streamdeck.ErrDisconnected) {
+		fatal(streamdeck.ErrDisconnected)
+		return true
+	}
+	return false
 }
 
 // triggerAction triggers an action.
@@ -269,8 +283,7 @@ func (d *Deck) triggerAction(dev *streamdeck.Device, index uint8, hold bool) {
 				fmt.Fprintln(os.Stderr, "Can't load deck:", err)
 				return
 			}
-			if err := dev.Clear(); err != nil {
-				fatal(err)
+			if err := dev.Clear(); err != nil && deviceFailed(err) {
 				return
 			}
 
@@ -293,7 +306,7 @@ func (d *Deck) triggerAction(dev *streamdeck.Device, index uint8, hold bool) {
 			switch {
 			case a.Device == "sleep":
 				if err := dev.Sleep(); err != nil {
-					fatalf("error: %v\n", err)
+					deviceFailed(err)
 				}
 
 			case strings.HasPrefix(a.Device, "brightness"):
@@ -315,7 +328,15 @@ func (d *Deck) updateWidgets() {
 
 		// fmt.Println("Repaint", w.Key())
 		if err := w.Update(); err != nil {
-			fatalf("error: %v", err)
+			var de drawError
+			if !errors.As(err, &de) {
+				fatalf("error: %v", err)
+				return
+			}
+			// The key draws again on the next update.
+			if deviceFailed(err) {
+				return
+			}
 		}
 	}
 }
@@ -362,7 +383,8 @@ func (d *Deck) adjustBrightness(dev *streamdeck.Device, value string) {
 		v = 100
 	}
 	if err := dev.SetBrightness(uint8(v)); err != nil {
-		fatalf("error: %v\n", err)
+		deviceFailed(err)
+		return
 	}
 
 	*brightness = uint(v)
