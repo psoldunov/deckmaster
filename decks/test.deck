@@ -1,0 +1,160 @@
+# A deck that exercises every widget and action on a 15-key Stream Deck:
+#
+#   nix run . -- -deck decks/test.deck -verbose
+#
+# -verbose prints each key press and the output of the exec key.
+
+# CPU and memory as two columns
+[[keys]]
+  index = 0
+  [keys.widget]
+    id = "top"
+    [keys.widget.config]
+      mode = "cpu;memory"
+      fillColor = "#d497de;#9bb6de"
+
+# amdgpu only: the bars stay empty elsewhere
+[[keys]]
+  index = 1
+  [keys.widget]
+    id = "top"
+    [keys.widget.config]
+      mode = "gpu;vram"
+
+# hwmon only: shows a dash elsewhere
+[[keys]]
+  index = 2
+  [keys.widget]
+    id = "temp"
+    [keys.widget.config]
+      chip = "k10temp"
+      sensor = "Tctl"
+      label = "CPU"
+
+# a tap switches between the clock and the date
+[[keys]]
+  index = 3
+  [keys.widget]
+    id = "toggle"
+    [[keys.widget.config.widgets]]
+      id = "clock"
+    [[keys.widget.config.widgets]]
+      id = "date"
+
+# the icon flips every two seconds
+[[keys]]
+  index = 4
+  [keys.widget]
+    id = "button"
+    interval = 500
+    [keys.widget.config]
+      icon = "assets/go-previous.png"
+      iconCommand = "[ $(( $(date +%s) / 2 % 2 )) -eq 0 ] && echo assets/go-previous.png || echo assets/go-next.png"
+      label = "iconCommand"
+      fontsize = 8
+
+[[keys]]
+  index = 5
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      icon = "assets/volume-low.png"
+      label = "Vol -"
+      fontsize = 8
+  [keys.action]
+    keycode = "Volumedown"
+    repeat = 150
+
+[[keys]]
+  index = 6
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      icon = "assets/volume-high.png"
+      label = "Vol +"
+      fontsize = 8
+  [keys.action]
+    keycode = "Volumeup"
+    repeat = 150
+
+[[keys]]
+  index = 7
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "Mute"
+  [keys.action]
+    keycode = "Mute"
+
+[[keys]]
+  index = 8
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "Prev"
+  [keys.action]
+    keycode = "Previoussong"
+
+[[keys]]
+  index = 9
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "Play"
+  [keys.action]
+    keycode = "Playpause"
+
+[[keys]]
+  index = 10
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "Next"
+  [keys.action]
+    keycode = "Nextsong"
+
+[[keys]]
+  index = 11
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "exec"
+  [keys.action]
+    exec = "echo deckmaster ran the exec key"
+
+# pastes into the focused window: ctrl-v on Linux, cmd-v on macOS
+[[keys]]
+  index = 12
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "Paste"
+  [keys.action]
+    paste = "pasted by deckmaster"
+
+# fails with a log line on macOS, which has no session bus
+[[keys]]
+  index = 13
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      label = "dbus"
+  [keys.action]
+    [keys.action.dbus]
+      object = "org.freedesktop.DBus"
+      path = "/org/freedesktop/DBus"
+      method = "org.freedesktop.DBus.GetNameOwner"
+      value = "org.freedesktop.DBus"
+
+[[keys]]
+  index = 14
+  [keys.widget]
+    id = "button"
+    [keys.widget.config]
+      icon = "assets/go-more.png"
+      label = "Dim"
+      fontsize = 8
+  [keys.action]
+    device = "brightness-10"
+  [keys.action_hold]
+    device = "brightness+10"

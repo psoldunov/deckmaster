@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -10,20 +13,29 @@ import (
 type ButtonWidget struct {
 	*BaseWidget
 
-	icon     image.Image
-	label    string
-	fontsize float64
-	color    color.Color
-	flatten  bool
+	icon        image.Image
+	iconPath    string
+	iconCommand string
+	label       string
+	fontsize    float64
+	color       color.Color
+	flatten     bool
 }
 
 // NewButtonWidget returns a new ButtonWidget.
 func NewButtonWidget(bw *BaseWidget, opts WidgetConfig) (*ButtonWidget, error) {
-	bw.setInterval(time.Duration(opts.Interval)*time.Millisecond, 0)
-
-	var icon, label string
+	var icon, iconCommand, label string
 	_ = ConfigValue(opts.Config["icon"], &icon)
+	_ = ConfigValue(opts.Config["iconCommand"], &iconCommand)
 	_ = ConfigValue(opts.Config["label"], &label)
+
+	// A button whose icon follows a command is repainted every second unless
+	// the widget sets its own interval.
+	var defaultInterval time.Duration
+	if iconCommand != "" {
+		defaultInterval = time.Second
+	}
+	bw.setInterval(time.Duration(opts.Interval)*time.Millisecond, defaultInterval)
 	var fontsize float64
 	_ = ConfigValue(opts.Config["fontsize"], &fontsize)
 	var color color.Color
@@ -36,11 +48,13 @@ func NewButtonWidget(bw *BaseWidget, opts WidgetConfig) (*ButtonWidget, error) {
 	}
 
 	w := &ButtonWidget{
-		BaseWidget: bw,
-		label:      label,
-		fontsize:   fontsize,
-		color:      color,
-		flatten:    flatten,
+		BaseWidget:  bw,
+		iconPath:    icon,
+		iconCommand: iconCommand,
+		label:       label,
+		fontsize:    fontsize,
+		color:       color,
+		flatten:     flatten,
 	}
 	if icon != "" {
 		if err := w.LoadImage(icon); err != nil {
@@ -49,6 +63,27 @@ func NewButtonWidget(bw *BaseWidget, opts WidgetConfig) (*ButtonWidget, error) {
 	}
 
 	return w, nil
+}
+
+// refreshIcon runs iconCommand and switches to the image file its output
+// names. A failing command or an unreadable image keeps the current icon, so a
+// missing media player cannot take the daemon down.
+func (w *ButtonWidget) refreshIcon() {
+	out, err := runCommand(w.iconCommand)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "iconCommand failed: %s\n", err)
+		return
+	}
+
+	path := strings.TrimSpace(out)
+	if path == "" || path == w.iconPath {
+		return
+	}
+	if err := w.LoadImage(path); err != nil {
+		fmt.Fprintf(os.Stderr, "Can't load icon %s: %s\n", path, err)
+		return
+	}
+	w.iconPath = path
 }
 
 // LoadImage loads an image from disk.
@@ -76,6 +111,10 @@ func (w *ButtonWidget) SetImage(img image.Image) {
 
 // Update renders the widget.
 func (w *ButtonWidget) Update() error {
+	if w.iconCommand != "" {
+		w.refreshIcon()
+	}
+
 	size := int(w.dev.Pixels)
 	margin := size / 18
 	height := size - (margin * 2)

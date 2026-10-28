@@ -155,10 +155,12 @@ func emulateKeyPress(keys string) {
 		}
 
 		if i+1 < len(kk) {
-			_ = keyboard.KeyDown(kc)
+			if err := keyboard.KeyDown(kc); err != nil {
+				fmt.Fprintf(os.Stderr, "Can't emulate keycode %d: %s\n", kc, err)
+			}
 			defer keyboard.KeyUp(kc) //nolint:errcheck
-		} else {
-			_ = keyboard.KeyPress(kc)
+		} else if err := keyboard.KeyPress(kc); err != nil {
+			fmt.Fprintf(os.Stderr, "Can't emulate keycode %d: %s\n", kc, err)
 		}
 	}
 }
@@ -171,11 +173,16 @@ func emulateClipboard(text string) {
 	}
 
 	// paste the string
-	emulateKeyPress("29-47") // ctrl-v
+	emulateKeyPress(pasteKeys)
 }
 
 // executes a dbus method.
 func executeDBusMethod(object, path, method, args string) {
+	if dbusConn == nil {
+		fmt.Fprintf(os.Stderr, "Can't run dbus action: %s\n", dbusErr)
+		return
+	}
+
 	call := dbusConn.Object(object, dbus.ObjectPath(path)).Call(method, 0, args)
 	if call.Err != nil {
 		fmt.Fprintf(os.Stderr, "dbus call failed: %s\n", call.Err)
@@ -202,6 +209,38 @@ func executeCommand(cmd string) {
 	}
 	if err := c.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "Command failed: %s\n", err)
+	}
+}
+
+// repeatInterval returns how often a held key repeats its action, or 0 if it
+// does not repeat.
+func (d *Deck) repeatInterval(index uint8) time.Duration {
+	for _, w := range d.Widgets {
+		if w.Key() == index && w.Action() != nil {
+			return time.Duration(w.Action().Repeat) * time.Millisecond
+		}
+	}
+	return 0
+}
+
+// repeatAction triggers a key's action every interval until released closes.
+func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, released <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-released:
+			return
+		default:
+			deck.triggerAction(dev, index, false)
+		}
+
+		select {
+		case <-released:
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

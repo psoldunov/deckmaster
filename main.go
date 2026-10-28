@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bendahl/uinput"
 	"github.com/godbus/dbus"
 	"github.com/mitchellh/go-homedir"
 	"github.com/muesli/streamdeck"
@@ -29,7 +28,8 @@ var (
 	deck *Deck
 
 	dbusConn *dbus.Conn
-	keyboard uinput.Keyboard
+	dbusErr  error
+	keyboard virtualKeyboard
 	shutdown = make(chan error)
 
 	xorg          *Xorg
@@ -42,6 +42,15 @@ var (
 	verbose    = flag.Bool("verbose", false, "verbose output")
 	version    = flag.Bool("version", false, "display version")
 )
+
+// virtualKeyboard emulates key presses. It takes Linux evdev key codes on every
+// platform, so a deck's keycodes work unchanged on macOS.
+type virtualKeyboard interface {
+	KeyPress(key int) error
+	KeyDown(key int) error
+	KeyUp(key int) error
+	Close() error
+}
 
 const (
 	fadeDuration      = 250 * time.Millisecond
@@ -90,6 +99,8 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 
 	var keyStates sync.Map
 	keyTimestamps := make(map[uint8]time.Time)
+	// closed when the key is released, which ends a repeating action
+	keyReleased := make(map[uint8]chan struct{})
 
 	kch, err := dev.ReadKeys()
 	if err != nil {
@@ -116,6 +127,10 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 
 			if state && !k.Pressed {
 				// key was released
+				if released, ok := keyReleased[k.Index]; ok {
+					close(released)
+					delete(keyReleased, k.Index)
+				}
 				if time.Since(keyTimestamps[k.Index]) < longPressDuration {
 					verbosef("Triggering short action for key %d", k.Index)
 					deck.triggerAction(dev, k.Index, false)
@@ -123,12 +138,19 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 			}
 			if !state && k.Pressed {
 				// key was pressed
+				released := make(chan struct{})
+				keyReleased[k.Index] = released
 				go func() {
 					// launch timer to observe keystate
 					time.Sleep(longPressDuration)
 
 					if state, ok := keyStates.Load(k.Index); ok && state.(bool) {
 						// key still pressed
+						if interval := deck.repeatInterval(k.Index); interval > 0 {
+							verbosef("Repeating action for key %d", k.Index)
+							repeatAction(dev, k.Index, interval, released)
+							return
+						}
 						verbosef("Triggering long action for key %d", k.Index)
 						deck.triggerAction(dev, k.Index, true)
 					}
@@ -250,9 +272,10 @@ func run() error {
 	}
 
 	// initialize dbus connection
-	dbusConn, err = dbus.SessionBus()
-	if err != nil {
-		return fmt.Errorf("Unable to connect to dbus: %s", err)
+	dbusConn, dbusErr = connectDBus()
+	if dbusErr != nil {
+		fmt.Fprintf(os.Stderr, "Could not connect to dbus: %s\n", dbusErr)
+		fmt.Fprintln(os.Stderr, "dbus actions will be disabled!")
 	}
 
 	// initialize xorg connection and track window focus
@@ -267,9 +290,9 @@ func run() error {
 	}
 
 	// initialize virtual keyboard
-	keyboard, err = uinput.CreateKeyboard("/dev/uinput", []byte("Deckmaster"))
+	keyboard, err = newKeyboard()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not create virtual input device (/dev/uinput): %s\n", err)
+		fmt.Fprintf(os.Stderr, "Could not create virtual keyboard: %s\n", err)
 		fmt.Fprintln(os.Stderr, "Emulating keyboard events will be disabled!")
 	} else {
 		defer keyboard.Close() //nolint:errcheck

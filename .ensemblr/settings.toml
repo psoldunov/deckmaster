@@ -1,0 +1,35 @@
+#:schema https://www.ensemblr.dev/schemas/settings.schema.json
+
+# Every command runs against this worktree's flake (`.`).
+
+[scripts]
+# Build the dev shell and fill the Go module cache, so a new workspace's first
+# build or lint does not wait on downloads.
+setup = "nix develop -c go mod download"
+
+# Build and test the package for this machine and evaluate the other systems.
+[scripts.run.check]
+command = "nix flake check"
+icon = "shield-check"
+default = true
+
+# Build the package into ./result.
+[scripts.run.build]
+command = "nix build"
+icon = "hammer"
+
+# Drive the attached Stream Deck from decks/test.deck until stopped. -verbose
+# prints every key press and the output of the exec key.
+[scripts.run.deck]
+command = "nix run . -- -deck decks/test.deck -verbose"
+icon = "play"
+
+# Lint the Go sources with golangci-lint and .golangci.yml, in the dev shell.
+[scripts.run.lint]
+command = "nix develop -c golangci-lint run ./..."
+icon = "list-checks"
+
+# Format every Nix file with alejandra, the flake's formatter.
+[scripts.run.format]
+command = "nix fmt -- ."
+icon = "paintbrush"

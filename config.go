@@ -31,6 +31,8 @@ type ActionConfig struct {
 	Paste   string     `toml:"paste,omitempty"`
 	Device  string     `toml:"device,omitempty"`
 	DBus    DBusConfig `toml:"dbus,omitempty"`
+	// Repeat, in milliseconds, re-triggers the action while its key is held.
+	Repeat uint `toml:"repeat,omitempty"`
 }
 
 // WidgetConfig describes configuration data for widgets.

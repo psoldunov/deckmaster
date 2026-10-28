@@ -22,6 +22,7 @@ require (
 require (
 	github.com/BurntSushi/freetype-go v0.0.0-20160129220410-b763ddbfe298 // indirect
 	github.com/BurntSushi/graphics-go v0.0.0-20160129215708-b43f31a4a966 // indirect
+	github.com/bearsh/hid v1.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/karalabe/hid v1.0.1-0.20190806082151-9c14560f9ee8 // indirect
@@ -32,3 +33,7 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
 	golang.org/x/sys v0.5.0 // indirect
 )
+
+// macOS needs a newer hidapi than karalabe/hid bundles; see
+// third_party/streamdeck/hid_darwin.go.
+replace github.com/muesli/streamdeck => ./third_party/streamdeck
