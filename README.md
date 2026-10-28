@@ -18,10 +18,12 @@ An application to control your Elgato Stream Deck on Linux
 - Comes with a collection of widgets:
     - Buttons
     - Time (with formatting)
-    - CPU/Mem usage
+    - CPU/Mem/GPU usage
+    - Temperature sensors
     - Weather
     - Command output
     - Recently used windows (X11-only)
+    - Several widgets on one key, switched with a tap
 - Lets you trigger several actions:
     - Run commands
     - Emulate a key-press
@@ -174,6 +176,7 @@ A simple button that can display an image and/or a label.
   id = "button"
   [keys.widget.config]
     icon = "/some/image.png" # optional
+    iconCommand = "~/bin/player-icon" # optional
     label = "My Button" # optional
     fontsize = 10.0 # optional
     color = "#fefefe" # optional
@@ -181,6 +184,12 @@ A simple button that can display an image and/or a label.
 ```
 
 If `flatten` is `true` all opaque pixels of the icon will have the color `color`.
+
+`iconCommand` is a shell command that deckmaster runs on every update of the
+widget, once a second unless the widget sets its own `interval`. The command
+prints the path of the image to show, either absolute or relative to the deck
+file. `icon` is shown until the command first answers. When the command fails
+or prints a path that can't be loaded, the key keeps its current icon.
 
 #### Recent Window (requires X11)
 
@@ -235,7 +244,7 @@ Values for `format` are:
 
 #### Top
 
-This widget shows the current CPU or memory utilization as a bar graph.
+This widget shows the current CPU, memory or GPU utilization as a bar graph.
 
 ```toml
 [keys.widget]
@@ -246,7 +255,62 @@ This widget shows the current CPU or memory utilization as a bar graph.
     fillColor = "#d497de" # optional
 ```
 
-There are two values for `mode`: `cpu` and `memory`.
+There are four values for `mode`:
+
+| mode     | shows                                  |
+| -------- | -------------------------------------- |
+| `cpu`    | CPU usage                              |
+| `memory` | memory usage                           |
+| `gpu`    | how busy the GPU is                    |
+| `vram`   | how much of the GPU's memory is in use |
+
+`gpu` and `vram` read the amdgpu card with the most VRAM from
+`/sys/class/drm`, so they need Linux and an AMD GPU. When an integrated GPU
+sits beside a discrete one, that picks the discrete card.
+
+`mode` can hold several modes split on `;`, which share the key as columns
+side by side. `fillColor` splits the same way, one color per column in the same
+order, and a column without a color of its own gets the default fill:
+
+```toml
+[keys.widget]
+  id = "top"
+  [keys.widget.config]
+    mode = "gpu;vram"
+    fillColor = "#d497de;#9bb6de" # optional
+```
+
+#### Temp
+
+This widget shows one hwmon temperature sensor in the same bar as `top`. The
+bar fills towards the sensor's critical temperature.
+
+```toml
+[keys.widget]
+  id = "temp"
+  [keys.widget.config]
+    chip = "k10temp"
+    sensor = "Tctl" # optional
+    device = "nvme0" # optional
+    label = "CPU" # optional
+    warn = 80 # optional
+    crit = 95 # optional
+    color = "#fefefe" # optional
+    fillColor = "#d497de" # optional
+```
+
+`chip` is the `name` of a chip in `/sys/class/hwmon`, and `sensor` is the
+`temp*_label` of a sensor on it. Leave `sensor` out to pick a chip's unlabelled
+sensor. When two chips share a name, as two NVMe drives do, `device` picks the
+one whose resolved sysfs device path contains it. `label` is drawn under the
+bar and defaults to `sensor`.
+
+`warn` and `crit` are in °C. Without them the widget uses the sensor's own
+`temp*_max` and `temp*_crit`, and a sensor without a critical temperature fills
+the bar at 100 °C. The bar turns orange at the warning temperature and red at
+the critical one. A sensor that can't be read shows a dash and is looked up
+again on the next update, once a second unless the widget sets its own
+`interval`.
 
 #### Command
 
@@ -284,6 +348,29 @@ corresponding icons with correct names need to be placed in
 `~/.local/share/deckmaster/themes/[theme]`. The default icons with their
 respective names can be found [here](https://github.com/muesli/deckmaster/tree/master/assets/weather).
 
+#### Toggle
+
+A widget that holds several widgets on one key and shows one at a time. A tap
+switches to the next one.
+
+```toml
+[keys.widget]
+  id = "toggle"
+  [[keys.widget.config.widgets]]
+    id = "clock"
+  [[keys.widget.config.widgets]]
+    id = "top"
+    interval = 1000 # optional
+    [keys.widget.config.widgets.config]
+      mode = "cpu;memory"
+```
+
+Each entry in `widgets` takes the same `id`, `interval` and `config` as a key's
+own `widget` table, and a toggle needs at least two. Every entry is built when
+the deck loads, so switching back keeps what a widget has already fetched. A
+tap switches only on a key without an `action` of its own, and holding the key
+doesn't switch.
+
 ### Actions
 
 You can hook up any key with several actions. A regular keypress will trigger
@@ -319,6 +406,20 @@ Emulate a series of key-presses with delay in between:
 ```
 
 A list of available `keycodes` can be found here: [keycodes](https://github.com/muesli/deckmaster/blob/master/keycodes.go)
+
+#### Repeat while held
+
+Any action can repeat while its key is held:
+
+```toml
+[keys.action]
+  keycode = "Volumeup"
+  repeat = 100
+```
+
+Once the key is held past a long press (350 ms), the action fires every
+`repeat` milliseconds until the key is released. A repeating key never fires
+its `keys.action_hold`. A short tap still fires the action once.
 
 #### Paste to clipboard
 
