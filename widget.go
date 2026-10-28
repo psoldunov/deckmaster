@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	_ "image/png" // decodes icons; the Linux build got it from the X11 libraries
 	"os"
 	"path/filepath"
 	"time"
