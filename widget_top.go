@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"math"
 	"strconv"
 	"time"
 
@@ -39,6 +40,13 @@ func NewTopWidget(bw *BaseWidget, opts WidgetConfig) *TopWidget {
 		color:      color,
 		fillColor:  fillColor,
 	}
+}
+
+// Repaint makes the widget draw again on the next update, even if the value
+// has not changed since it last drew.
+func (w *TopWidget) Repaint() {
+	w.BaseWidget.Repaint()
+	w.lastValue = math.NaN()
 }
 
 // Update renders the widget.

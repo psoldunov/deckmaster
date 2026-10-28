@@ -73,6 +73,12 @@ func (w *BaseWidget) RequiresUpdate() bool {
 	return true
 }
 
+// Repaint makes the widget draw again on the next update, even before its
+// interval has passed.
+func (w *BaseWidget) Repaint() {
+	w.lastUpdate = time.Time{}
+}
+
 // Update renders the widget.
 func (w *BaseWidget) Update() error {
 	return w.render(w.dev, nil)
@@ -118,6 +124,9 @@ func NewWidget(dev *streamdeck.Device, base string, kc KeyConfig, bg image.Image
 
 	case "top":
 		return NewTopWidget(bw, kc.Widget), nil
+
+	case "toggle":
+		return NewToggleWidget(bw, kc.Widget)
 
 	case "command":
 		return NewCommandWidget(bw, kc.Widget), nil
