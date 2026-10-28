@@ -110,7 +110,6 @@ func (w *TempWidget) Update() error {
 		w.lastUpdate = time.Now()
 		return nil
 	}
-	w.lastValue = temp
 
 	m := meter{
 		value:     "–",
@@ -134,7 +133,12 @@ func (w *TempWidget) Update() error {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	m.draw(img, img.Bounds(), w.dev.DPI)
 
-	return w.render(w.dev, img)
+	// A value that did not reach the deck is drawn again next time.
+	if err := w.render(w.dev, img); err != nil {
+		return err
+	}
+	w.lastValue = temp
+	return nil
 }
 
 // read returns the sensor's temperature in °C, finding the sensor first if

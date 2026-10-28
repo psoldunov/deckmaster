@@ -5,7 +5,7 @@ module github.com/muesli/streamdeck
 go 1.14
 
 require (
-	github.com/bearsh/hid v1.4.1
+	github.com/bearsh/hid v1.6.0
 	github.com/karalabe/hid v1.0.1-0.20190806082151-9c14560f9ee8
 	golang.org/x/image v0.7.0
 )

@@ -101,6 +101,9 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 	keyTimestamps := make(map[uint8]time.Time)
 	// closed when the key is released, which ends a repeating action
 	keyReleased := make(map[uint8]chan struct{})
+	// Long presses and repeats run here, on the one goroutine that touches
+	// the deck and its widgets.
+	actions := make(chan func())
 
 	kch, err := dev.ReadKeys()
 	if err != nil {
@@ -111,12 +114,14 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 		case <-time.After(100 * time.Millisecond):
 			deck.updateWidgets()
 
+		case action := <-actions:
+			action()
+
 		case k, ok := <-kch:
 			if !ok {
-				if err = dev.Open(); err != nil {
-					return err
-				}
-				continue
+				// The reader follows the device across a reopen, so a closed
+				// channel means the deck is gone.
+				return streamdeck.ErrDisconnected
 			}
 
 			var state bool
@@ -140,21 +145,23 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 				// key was pressed
 				released := make(chan struct{})
 				keyReleased[k.Index] = released
-				go func() {
-					// launch timer to observe keystate
-					time.Sleep(longPressDuration)
-
-					if state, ok := keyStates.Load(k.Index); ok && state.(bool) {
-						// key still pressed
-						if interval := deck.repeatInterval(k.Index); interval > 0 {
-							verbosef("Repeating action for key %d", k.Index)
-							repeatAction(dev, k.Index, interval, released)
-							return
-						}
-						verbosef("Triggering long action for key %d", k.Index)
-						deck.triggerAction(dev, k.Index, true)
+				index := k.Index
+				longPress := func() {
+					state, ok := keyStates.Load(index)
+					if !ok || !state.(bool) {
+						return
 					}
-				}()
+					// key still pressed
+					if interval := deck.repeatInterval(index); interval > 0 {
+						verbosef("Repeating action for key %d", index)
+						go repeatAction(dev, index, interval, released, actions)
+						return
+					}
+					verbosef("Triggering long action for key %d", index)
+					deck.triggerAction(dev, index, true)
+				}
+				// launch timer to observe keystate
+				time.AfterFunc(longPressDuration, func() { actions <- longPress })
 			}
 			keyTimestamps[k.Index] = time.Now()
 
@@ -192,10 +199,10 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 
 func closeDevice(dev *streamdeck.Device) {
 	if err := dev.Reset(); err != nil {
-		fmt.Fprintln(os.Stderr, "Unable to reset Stream Deck")
+		fmt.Fprintln(os.Stderr, "Unable to reset Stream Deck:", err)
 	}
 	if err := dev.Close(); err != nil {
-		fmt.Fprintln(os.Stderr, "Unable to close Stream Deck")
+		fmt.Fprintln(os.Stderr, "Unable to close Stream Deck:", err)
 	}
 }
 
@@ -221,7 +228,7 @@ func initDevice() (*streamdeck.Device, error) {
 		if !found {
 			fmt.Fprintln(os.Stderr, "Can't find device. Available devices:")
 			for _, v := range d {
-				fmt.Fprintf(os.Stderr, "Serial %s (%d buttons)\n", v.Serial, dev.Keys)
+				fmt.Fprintf(os.Stderr, "Serial %s (%d buttons)\n", v.Serial, v.Keys)
 			}
 			os.Exit(1)
 		}

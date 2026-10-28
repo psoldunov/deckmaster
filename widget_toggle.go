@@ -111,8 +111,7 @@ func (w *ToggleWidget) Repaint() {
 }
 
 // TriggerAction switches to the next widget on a tap. deckmaster calls it only
-// for a key without an action of its own. A hold does nothing: it arrives on
-// its own goroutine, while a tap arrives on the loop that also updates widgets.
+// for a key without an action of its own. A hold does nothing.
 func (w *ToggleWidget) TriggerAction(hold bool) {
 	if hold {
 		return

@@ -208,7 +208,6 @@ func (w *TopWidget) Update() error {
 		w.lastUpdate = time.Now()
 		return nil
 	}
-	w.lastValues = values
 
 	size := int(w.dev.Pixels)
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
@@ -229,7 +228,12 @@ func (w *TopWidget) Update() error {
 		m.draw(img, frame, w.dev.DPI)
 	}
 
-	return w.render(w.dev, img)
+	// Values that did not reach the deck are drawn again next time.
+	if err := w.render(w.dev, img); err != nil {
+		return err
+	}
+	w.lastValues = values
+	return nil
 }
 
 // equalValues reports whether two readings hold the same values. NaN, which

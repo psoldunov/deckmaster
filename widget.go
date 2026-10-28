@@ -156,7 +156,26 @@ func (w *BaseWidget) render(dev *streamdeck.Device, fg image.Image) error {
 		draw.Draw(img, img.Bounds(), fg, image.Point{}, draw.Over)
 	}
 
-	return dev.SetImage(w.key, img)
+	if err := dev.SetImage(w.key, img); err != nil {
+		w.Repaint()
+		return drawError{key: w.key, err: err}
+	}
+	return nil
+}
+
+// drawError is a key image the device did not take. deckmaster survives it:
+// the widget draws again on the next update.
+type drawError struct {
+	key uint8
+	err error
+}
+
+func (e drawError) Error() string {
+	return fmt.Sprintf("can't draw key %d: %v", e.key, e.err)
+}
+
+func (e drawError) Unwrap() error {
+	return e.err
 }
 
 // change the interval a widget gets rendered in.

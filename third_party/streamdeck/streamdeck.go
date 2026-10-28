@@ -3,6 +3,7 @@ package streamdeck
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -17,7 +18,30 @@ import (
 const (
 	// 30 fps fade animation.
 	fadeDelay = time.Second / 30
+
+	// A write or feature report that fails is tried ioAttempts times on the
+	// open handle, ioRetryDelay apart, then as often again on a reopened one.
+	// macOS rejects the odd transfer to a Stream Deck MK.2 with
+	// kIOReturnError (0xE00002BC), about once a minute under a busy deck and
+	// with or without other transfers in flight; the next attempt goes through.
+	ioAttempts   = 3
+	ioRetryDelay = 20 * time.Millisecond
 )
+
+// ErrDisconnected is returned once the device has no open handle: it kept
+// failing and could not be opened again, which is what an unplugged deck
+// looks like, or it was closed. Every later call returns it as well.
+var ErrDisconnected = errors.New("stream deck disconnected")
+
+// hidHandle is the part of an open HID device a Stream Deck uses. The tests
+// stand in for it.
+type hidHandle interface {
+	Read(b []byte) (int, error)
+	Write(b []byte) (int, error)
+	SendFeatureReport(b []byte) (int, error)
+	GetFeatureReport(b []byte) (int, error)
+	Close() error
+}
 
 // Stream Deck Vendor & Product IDs.
 //
@@ -73,9 +97,14 @@ type Device struct {
 
 	keyState []byte
 
-	device *hidDevice
-	info   hidDeviceInfo
+	// ioMutex guards device and serializes every write, feature report,
+	// reopen and close, so the pages of an image go out back to back.
+	// Overlapping transfers also make macOS reject them far more often.
+	ioMutex *sync.Mutex
+	device  hidHandle
+	open    func() (hidHandle, error)
 
+	// sleepMutex guards everything from here down.
 	lastActionTime time.Time
 	asleep         bool
 	sleepCancel    context.CancelFunc
@@ -197,7 +226,9 @@ func Devices() ([]Device, error) {
 
 		if dev.ID != "" {
 			dev.keyState = make([]byte, dev.Columns*dev.Rows)
-			dev.info = d
+			dev.ioMutex = &sync.Mutex{}
+			dev.sleepMutex = &sync.RWMutex{}
+			dev.open = wrapOpen(opener(d))
 			dd = append(dd, dev)
 		}
 	}
@@ -205,24 +236,100 @@ func Devices() ([]Device, error) {
 	return dd, nil
 }
 
+// wrapOpen lets a build with -tags streamdeck_fault stand between a deck and
+// its handles; see fault.go.
+var wrapOpen = func(open func() (hidHandle, error)) func() (hidHandle, error) { return open }
+
+// opener opens the device by the path it was enumerated under. A replugged
+// deck comes back under a new path, so it cannot be reopened this way.
+func opener(info hidDeviceInfo) func() (hidHandle, error) {
+	return func() (hidHandle, error) {
+		device, err := info.Open()
+		if err != nil {
+			return nil, err
+		}
+		return device, nil
+	}
+}
+
 // Open the device for input/output. This must be called before trying to
 // communicate with the device.
 func (d *Device) Open() error {
-	var err error
-	d.device, err = d.info.Open()
+	d.sleepMutex.Lock()
 	d.lastActionTime = time.Now()
-	d.sleepMutex = &sync.RWMutex{}
-	return err
+	d.sleepMutex.Unlock()
+
+	d.ioMutex.Lock()
+	defer d.ioMutex.Unlock()
+	return d.reopen()
 }
 
 // Close the connection with the device.
 func (d *Device) Close() error {
 	d.cancelSleepTimer()
-	return d.device.Close()
+
+	d.ioMutex.Lock()
+	defer d.ioMutex.Unlock()
+	if d.device == nil {
+		return nil
+	}
+	err := d.device.Close()
+	d.device = nil
+	return err
+}
+
+// reopen closes the handle, if there is one, and opens the device again.
+// The caller holds ioMutex. On failure the device is left closed.
+func (d *Device) reopen() error {
+	if d.device != nil {
+		_ = d.device.Close()
+		d.device = nil
+	}
+	device, err := d.open()
+	if err != nil {
+		return err
+	}
+	d.device = device
+	return nil
+}
+
+// do runs op on the open handle under ioMutex, so no other write, feature
+// report or reopen comes in between. An op that keeps failing is run again on
+// a reopened handle; a device that cannot be reopened stays closed and the
+// error wraps ErrDisconnected.
+func (d *Device) do(op func(hidHandle) error) error {
+	d.ioMutex.Lock()
+	defer d.ioMutex.Unlock()
+
+	if d.device == nil {
+		return ErrDisconnected
+	}
+	err := d.attempt(op)
+	if err == nil {
+		return nil
+	}
+	if rerr := d.reopen(); rerr != nil {
+		return fmt.Errorf("%w: %v, then reopening it failed: %v", ErrDisconnected, err, rerr)
+	}
+	return d.attempt(op)
+}
+
+// attempt runs op up to ioAttempts times on the open handle.
+func (d *Device) attempt(op func(hidHandle) error) error {
+	var err error
+	for i := 0; i < ioAttempts; i++ {
+		if i > 0 {
+			time.Sleep(ioRetryDelay)
+		}
+		if err = op(d.device); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // FirmwareVersion returns the firmware version of the device.
-func (d Device) FirmwareVersion() (string, error) {
+func (d *Device) FirmwareVersion() (string, error) {
 	result, err := d.getFeatureReport(d.getFirmwareCommand)
 	if err != nil {
 		return "", err
@@ -231,18 +338,16 @@ func (d Device) FirmwareVersion() (string, error) {
 }
 
 // Resets the Stream Deck, clears all button images and shows the standby image.
-func (d Device) Reset() error {
+func (d *Device) Reset() error {
 	return d.sendFeatureReport(d.resetCommand)
 }
 
 // Clears the Stream Deck, setting a black image on all buttons.
-func (d Device) Clear() error {
+func (d *Device) Clear() error {
 	img := image.NewRGBA(image.Rect(0, 0, int(d.Pixels), int(d.Pixels)))
 	draw.Draw(img, img.Bounds(), image.NewUniform(color.RGBA{0, 0, 0, 255}), image.Point{}, draw.Src)
-	for i := uint8(0); i <= d.Columns*d.Rows; i++ {
-		err := d.SetImage(i, img)
-		if err != nil {
-			fmt.Println(err)
+	for i := uint8(0); i < d.Keys; i++ {
+		if err := d.SetImage(i, img); err != nil {
 			return err
 		}
 	}
@@ -251,20 +356,21 @@ func (d Device) Clear() error {
 }
 
 // ReadKeys returns a channel, which it will use to emit key presses/releases.
+// The channel is closed once the device is closed or gone.
 func (d *Device) ReadKeys() (chan Key, error) {
 	kch := make(chan Key)
 	keyBuffer := make([]byte, d.keyStateOffset+len(d.keyState))
 	go func() {
+		defer close(kch)
 		for {
 			copy(d.keyState, keyBuffer[d.keyStateOffset:])
 
-			if _, err := d.device.Read(keyBuffer); err != nil {
-				close(kch)
+			if !d.read(keyBuffer) {
 				return
 			}
 
 			// don't trigger a key event if the device is asleep, but wake it
-			if d.asleep {
+			if d.Asleep() {
 				_ = d.Wake()
 
 				// reset state so no spurious key events get triggered
@@ -293,6 +399,32 @@ func (d *Device) ReadKeys() (chan Key, error) {
 	return kch, nil
 }
 
+// read waits for the next input report. It carries on across a reopen, which
+// closes the handle under a blocked read, and returns false once the device
+// is closed or gone.
+func (d *Device) read(b []byte) bool {
+	for {
+		d.ioMutex.Lock()
+		device := d.device
+		d.ioMutex.Unlock()
+		if device == nil {
+			return false
+		}
+
+		if _, err := device.Read(b); err == nil {
+			return true
+		}
+
+		// Locking waits out a reopen that is still under way.
+		d.ioMutex.Lock()
+		reopened := d.device != nil && d.device != device
+		d.ioMutex.Unlock()
+		if !reopened {
+			return false
+		}
+	}
+}
+
 // Sleep puts the device asleep, waiting for a key event to wake it up.
 func (d *Device) Sleep() error {
 	d.sleepMutex.Lock()
@@ -300,12 +432,12 @@ func (d *Device) Sleep() error {
 
 	d.preSleepBrightness = d.brightness
 
-	if err := d.Fade(d.brightness, 0, d.fadeDuration); err != nil {
+	if err := d.fade(d.brightness, 0, d.fadeDuration); err != nil {
 		return err
 	}
 
 	d.asleep = true
-	return d.SetBrightness(0)
+	return d.setBrightness(0)
 }
 
 // Wake wakes the device from sleep.
@@ -314,16 +446,18 @@ func (d *Device) Wake() error {
 	defer d.sleepMutex.Unlock()
 
 	d.asleep = false
-	if err := d.Fade(0, d.preSleepBrightness, d.fadeDuration); err != nil {
+	if err := d.fade(0, d.preSleepBrightness, d.fadeDuration); err != nil {
 		return err
 	}
 
 	d.lastActionTime = time.Now()
-	return d.SetBrightness(d.preSleepBrightness)
+	return d.setBrightness(d.preSleepBrightness)
 }
 
 // Asleep returns true if the device is asleep.
-func (d Device) Asleep() bool {
+func (d *Device) Asleep() bool {
+	d.sleepMutex.RLock()
+	defer d.sleepMutex.RUnlock()
 	return d.asleep
 }
 
@@ -359,9 +493,10 @@ func (d *Device) SetSleepTimeout(t time.Duration) {
 			case <-time.After(time.Second):
 				d.sleepMutex.RLock()
 				since := time.Since(d.lastActionTime)
+				asleep := d.asleep
 				d.sleepMutex.RUnlock()
 
-				if !d.asleep && since >= t {
+				if !asleep && since >= t {
 					_ = d.Sleep()
 				}
 
@@ -374,6 +509,13 @@ func (d *Device) SetSleepTimeout(t time.Duration) {
 
 // Fade fades the brightness in or out.
 func (d *Device) Fade(start uint8, end uint8, duration time.Duration) error {
+	d.sleepMutex.Lock()
+	defer d.sleepMutex.Unlock()
+	return d.fade(start, end, duration)
+}
+
+// fade is Fade for a caller holding sleepMutex.
+func (d *Device) fade(start uint8, end uint8, duration time.Duration) error {
 	step := (float64(end) - float64(start)) / float64(duration/fadeDelay)
 	if step == math.Inf(1) || step == math.Inf(-1) {
 		return nil
@@ -384,7 +526,7 @@ func (d *Device) Fade(start uint8, end uint8, duration time.Duration) error {
 			(start > end && int8(current) > int8(end))) {
 			break
 		}
-		if err := d.SetBrightness(uint8(current)); err != nil {
+		if err := d.setBrightness(uint8(current)); err != nil {
 			return err
 		}
 
@@ -395,6 +537,13 @@ func (d *Device) Fade(start uint8, end uint8, duration time.Duration) error {
 
 // SetBrightness sets the background lighting brightness from 0 to 100 percent.
 func (d *Device) SetBrightness(percent uint8) error {
+	d.sleepMutex.Lock()
+	defer d.sleepMutex.Unlock()
+	return d.setBrightness(percent)
+}
+
+// setBrightness is SetBrightness for a caller holding sleepMutex.
+func (d *Device) setBrightness(percent uint8) error {
 	if percent > 100 {
 		percent = 100
 	}
@@ -402,9 +551,7 @@ func (d *Device) SetBrightness(percent uint8) error {
 	d.brightness = percent
 	if d.asleep && percent > 0 {
 		// if the device is asleep, remember the brightness, but don't set it
-		d.sleepMutex.Lock()
 		d.preSleepBrightness = percent
-		d.sleepMutex.Unlock()
 		return nil
 	}
 
@@ -418,7 +565,7 @@ func (d *Device) SetBrightness(percent uint8) error {
 // SetImage sets the image of a button on the Stream Deck. The provided image
 // needs to be in the correct resolution for the device. The index starts with
 // 0 being the top-left button.
-func (d Device) SetImage(index uint8, img image.Image) error {
+func (d *Device) SetImage(index uint8, img image.Image) error {
 	if img.Bounds().Dy() != int(d.Pixels) ||
 		img.Bounds().Dx() != int(d.Pixels) {
 		return fmt.Errorf("supplied image has wrong dimensions, expected %[1]dx%[1]d pixels", d.Pixels)
@@ -432,7 +579,16 @@ func (d Device) SetImage(index uint8, img image.Image) error {
 		image:    imageBytes,
 		pageSize: d.imagePageSize - d.imagePageHeaderSize,
 	}
+	key := d.translateKeyIndex(index, d.Columns)
 
+	// A retry starts over from page 0.
+	return d.do(func(device hidHandle) error {
+		return d.writeImage(device, key, imageData)
+	})
+}
+
+// writeImage sends every page of an image to the device.
+func (d *Device) writeImage(device hidHandle, key uint8, imageData imageData) error {
 	data := make([]byte, d.imagePageSize)
 
 	var page int
@@ -440,14 +596,14 @@ func (d Device) SetImage(index uint8, img image.Image) error {
 	for !lastPage {
 		var payload []byte
 		payload, lastPage = imageData.Page(page)
-		header := d.imagePageHeader(page, d.translateKeyIndex(index, d.Columns), len(payload), lastPage)
+		header := d.imagePageHeader(page, key, len(payload), lastPage)
 
 		copy(data, header)
 		copy(data[len(header):], payload)
 
-		_, err := d.device.Write(data)
+		_, err := device.Write(data)
 		if err != nil {
-			return fmt.Errorf("cannot write image page %d of %d (%d image bytes) %d bytes: %v",
+			return fmt.Errorf("cannot write image page %d of %d (%d image bytes) %d bytes: %w",
 				page, imageData.PageCount(), imageData.Length(), len(data), err)
 		}
 
@@ -459,10 +615,13 @@ func (d Device) SetImage(index uint8, img image.Image) error {
 
 // getFeatureReport from the device without worries about the correct payload
 // size.
-func (d Device) getFeatureReport(payload []byte) ([]byte, error) {
+func (d *Device) getFeatureReport(payload []byte) ([]byte, error) {
 	b := make([]byte, d.featureReportSize)
-	copy(b, payload)
-	_, err := d.device.GetFeatureReport(b)
+	err := d.do(func(device hidHandle) error {
+		copy(b, payload)
+		_, err := device.GetFeatureReport(b)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -471,11 +630,13 @@ func (d Device) getFeatureReport(payload []byte) ([]byte, error) {
 
 // sendFeatureReport to the device without worries about the correct payload
 // size.
-func (d Device) sendFeatureReport(payload []byte) error {
+func (d *Device) sendFeatureReport(payload []byte) error {
 	b := make([]byte, d.featureReportSize)
 	copy(b, payload)
-	_, err := d.device.SendFeatureReport(b)
-	return err
+	return d.do(func(device hidHandle) error {
+		_, err := device.SendFeatureReport(b)
+		return err
+	})
 }
 
 // translateRightToLeft translates the given key index from right-to-left to
