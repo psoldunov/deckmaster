@@ -30,6 +30,8 @@ type TopWidget struct {
 	// sysfs directory of the GPU the gpu and vram modes read, found on the
 	// first update
 	gpuDevice string
+	// whether the missing GPU has been reported
+	noGPUReported bool
 
 	lastValues []float64
 }
@@ -132,6 +134,10 @@ func (w *TopWidget) gpuUsage(mode string) (float64, error) {
 	return float64(used) * 100 / float64(total), nil
 }
 
+// errNoGPU is returned for the gpu and vram modes on a machine without an
+// amdgpu card.
+var errNoGPU = errors.New("no amdgpu card found in /sys/class/drm")
+
 // findAMDGPU returns the sysfs device directory of the amdgpu card with the
 // most VRAM, which is the discrete one when an integrated GPU sits beside it.
 func findAMDGPU() (string, error) {
@@ -150,7 +156,7 @@ func findAMDGPU() (string, error) {
 		device, most = filepath.Dir(path), total
 	}
 	if device == "" {
-		return "", errors.New("no amdgpu card found in /sys/class/drm")
+		return "", errNoGPU
 	}
 	return device, nil
 }
@@ -174,7 +180,17 @@ func (w *TopWidget) Update() error {
 	labels := make([]string, len(w.modes))
 	for i, mode := range w.modes {
 		value, label, err := w.usage(mode)
-		if err != nil {
+		switch {
+		case errors.Is(err, errNoGPU):
+			// A machine without an amdgpu card, a Mac among them, draws the
+			// bar empty.
+			if !w.noGPUReported {
+				fmt.Fprintf(os.Stderr, "Can't retrieve GPU usage: %s\n", err)
+				w.noGPUReported = true
+			}
+			value = math.Inf(-1)
+
+		case err != nil:
 			if mode != "gpu" && mode != "vram" {
 				return err
 			}
@@ -203,6 +219,9 @@ func (w *TopWidget) Update() error {
 			label:     labels[i],
 			color:     w.color,
 			fillColor: w.fillColors[i],
+		}
+		if math.IsInf(values[i], -1) {
+			m.value = "–"
 		}
 		if len(values) == 1 {
 			m.label = "% " + m.label
