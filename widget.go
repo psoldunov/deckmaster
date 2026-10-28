@@ -128,6 +128,9 @@ func NewWidget(dev *streamdeck.Device, base string, kc KeyConfig, bg image.Image
 	case "toggle":
 		return NewToggleWidget(bw, kc.Widget)
 
+	case "temp":
+		return NewTempWidget(bw, kc.Widget), nil
+
 	case "command":
 		return NewCommandWidget(bw, kc.Widget), nil
 
