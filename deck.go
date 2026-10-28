@@ -205,6 +205,38 @@ func executeCommand(cmd string) {
 	}
 }
 
+// repeatInterval returns how often a held key repeats its action, or 0 if it
+// does not repeat.
+func (d *Deck) repeatInterval(index uint8) time.Duration {
+	for _, w := range d.Widgets {
+		if w.Key() == index && w.Action() != nil {
+			return time.Duration(w.Action().Repeat) * time.Millisecond
+		}
+	}
+	return 0
+}
+
+// repeatAction triggers a key's action every interval until released closes.
+func repeatAction(dev *streamdeck.Device, index uint8, interval time.Duration, released <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-released:
+			return
+		default:
+			deck.triggerAction(dev, index, false)
+		}
+
+		select {
+		case <-released:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // triggerAction triggers an action.
 func (d *Deck) triggerAction(dev *streamdeck.Device, index uint8, hold bool) {
 	for _, w := range d.Widgets {

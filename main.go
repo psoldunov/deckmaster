@@ -90,6 +90,8 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 
 	var keyStates sync.Map
 	keyTimestamps := make(map[uint8]time.Time)
+	// closed when the key is released, which ends a repeating action
+	keyReleased := make(map[uint8]chan struct{})
 
 	kch, err := dev.ReadKeys()
 	if err != nil {
@@ -116,6 +118,10 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 
 			if state && !k.Pressed {
 				// key was released
+				if released, ok := keyReleased[k.Index]; ok {
+					close(released)
+					delete(keyReleased, k.Index)
+				}
 				if time.Since(keyTimestamps[k.Index]) < longPressDuration {
 					verbosef("Triggering short action for key %d", k.Index)
 					deck.triggerAction(dev, k.Index, false)
@@ -123,12 +129,19 @@ func eventLoop(dev *streamdeck.Device, tch chan interface{}) error {
 			}
 			if !state && k.Pressed {
 				// key was pressed
+				released := make(chan struct{})
+				keyReleased[k.Index] = released
 				go func() {
 					// launch timer to observe keystate
 					time.Sleep(longPressDuration)
 
 					if state, ok := keyStates.Load(k.Index); ok && state.(bool) {
 						// key still pressed
+						if interval := deck.repeatInterval(k.Index); interval > 0 {
+							verbosef("Repeating action for key %d", k.Index)
+							repeatAction(dev, k.Index, interval, released)
+							return
+						}
 						verbosef("Triggering long action for key %d", k.Index)
 						deck.triggerAction(dev, k.Index, true)
 					}
