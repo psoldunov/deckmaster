@@ -29,6 +29,7 @@ var (
 	deck *Deck
 
 	dbusConn *dbus.Conn
+	dbusErr  error
 	keyboard uinput.Keyboard
 	shutdown = make(chan error)
 
@@ -263,9 +264,10 @@ func run() error {
 	}
 
 	// initialize dbus connection
-	dbusConn, err = dbus.SessionBus()
-	if err != nil {
-		return fmt.Errorf("Unable to connect to dbus: %s", err)
+	dbusConn, dbusErr = dbus.SessionBus()
+	if dbusErr != nil {
+		fmt.Fprintf(os.Stderr, "Could not connect to dbus: %s\n", dbusErr)
+		fmt.Fprintln(os.Stderr, "dbus actions will be disabled!")
 	}
 
 	// initialize xorg connection and track window focus
