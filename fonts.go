@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/flopp/go-findfont"
 	"github.com/golang/freetype"
@@ -17,6 +18,11 @@ var (
 	ttfFont     *truetype.Font
 	ttfThinFont *truetype.Font
 	ttfBoldFont *truetype.Font
+
+	// fontDir is searched for fonts before the system's font directories. The
+	// Nix package sets it with -ldflags "-X main.fontDir=...", so the binary
+	// finds Roboto in the store on any platform.
+	fontDir string
 )
 
 // maxPointSize returns the maximum point size we can use to fit text inside
@@ -70,8 +76,19 @@ func ftContext(img *image.RGBA, ttf *truetype.Font, dpi uint, fontsize float64) 
 	return c
 }
 
+// findFont returns the path of a font file, looking in fontDir first.
+func findFont(name string) (string, error) {
+	if fontDir != "" {
+		path := filepath.Join(fontDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return findfont.Find(name)
+}
+
 func loadFont(name string) (*truetype.Font, error) {
-	fontPath, err := findfont.Find(name)
+	fontPath, err := findFont(name)
 	if err != nil {
 		return nil, err
 	}
