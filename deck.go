@@ -155,10 +155,12 @@ func emulateKeyPress(keys string) {
 		}
 
 		if i+1 < len(kk) {
-			_ = keyboard.KeyDown(kc)
+			if err := keyboard.KeyDown(kc); err != nil {
+				fmt.Fprintf(os.Stderr, "Can't emulate keycode %d: %s\n", kc, err)
+			}
 			defer keyboard.KeyUp(kc) //nolint:errcheck
-		} else {
-			_ = keyboard.KeyPress(kc)
+		} else if err := keyboard.KeyPress(kc); err != nil {
+			fmt.Fprintf(os.Stderr, "Can't emulate keycode %d: %s\n", kc, err)
 		}
 	}
 }
@@ -171,7 +173,7 @@ func emulateClipboard(text string) {
 	}
 
 	// paste the string
-	emulateKeyPress("29-47") // ctrl-v
+	emulateKeyPress(pasteKeys)
 }
 
 // executes a dbus method.

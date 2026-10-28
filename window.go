@@ -1,8 +1,28 @@
 package main
 
 import (
+	"image"
+
 	"github.com/muesli/streamdeck"
 )
+
+// ActiveWindowChangedEvent gets emitted when the active window changes.
+type ActiveWindowChangedEvent struct {
+	Window Window
+}
+
+// WindowClosedEvent gets emitted when a window gets closed.
+type WindowClosedEvent struct {
+	Window Window
+}
+
+// Window describes an X11 window.
+type Window struct {
+	ID    uint32
+	Class string
+	Name  string
+	Icon  image.Image
+}
 
 func handleActiveWindowChanged(dev *streamdeck.Device, event ActiveWindowChangedEvent) {
 	verbosef("Active window changed to %s (%d, %s)",

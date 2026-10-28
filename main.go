@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bendahl/uinput"
 	"github.com/godbus/dbus"
 	"github.com/mitchellh/go-homedir"
 	"github.com/muesli/streamdeck"
@@ -30,7 +29,7 @@ var (
 
 	dbusConn *dbus.Conn
 	dbusErr  error
-	keyboard uinput.Keyboard
+	keyboard virtualKeyboard
 	shutdown = make(chan error)
 
 	xorg          *Xorg
@@ -43,6 +42,15 @@ var (
 	verbose    = flag.Bool("verbose", false, "verbose output")
 	version    = flag.Bool("version", false, "display version")
 )
+
+// virtualKeyboard emulates key presses. It takes Linux evdev key codes on every
+// platform, so a deck's keycodes work unchanged on macOS.
+type virtualKeyboard interface {
+	KeyPress(key int) error
+	KeyDown(key int) error
+	KeyUp(key int) error
+	Close() error
+}
 
 const (
 	fadeDuration      = 250 * time.Millisecond
@@ -264,7 +272,7 @@ func run() error {
 	}
 
 	// initialize dbus connection
-	dbusConn, dbusErr = dbus.SessionBus()
+	dbusConn, dbusErr = connectDBus()
 	if dbusErr != nil {
 		fmt.Fprintf(os.Stderr, "Could not connect to dbus: %s\n", dbusErr)
 		fmt.Fprintln(os.Stderr, "dbus actions will be disabled!")
@@ -282,9 +290,9 @@ func run() error {
 	}
 
 	// initialize virtual keyboard
-	keyboard, err = uinput.CreateKeyboard("/dev/uinput", []byte("Deckmaster"))
+	keyboard, err = newKeyboard()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not create virtual input device (/dev/uinput): %s\n", err)
+		fmt.Fprintf(os.Stderr, "Could not create virtual keyboard: %s\n", err)
 		fmt.Fprintln(os.Stderr, "Emulating keyboard events will be disabled!")
 	} else {
 		defer keyboard.Close() //nolint:errcheck
