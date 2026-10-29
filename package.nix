@@ -22,7 +22,7 @@ in
       ];
     };
 
-    vendorHash = "sha256-QxdHDVQPqKiVvKCYQ3fFPzGm6nzvbeg0ZCB8jK1VBdc=";
+    vendorHash = "sha256-swuA8pYAcmZcnVZiW3OJO1gCA0A0ypuFXRV6KhmvQmM=";
 
     proxyVendor = true;
 
