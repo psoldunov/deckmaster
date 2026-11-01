@@ -10,6 +10,19 @@ package main
 #import <AppKit/AppKit.h>
 #include <ApplicationServices/ApplicationServices.h>
 
+// requestAccessibility reports whether macOS lets deckmaster post key events.
+// When it does not, macOS also adds deckmaster to the Accessibility list
+// (switched off) and asks the user to open that list.
+static bool requestAccessibility(void) {
+	const void *keys[] = {kAXTrustedCheckOptionPrompt};
+	const void *values[] = {kCFBooleanTrue};
+	CFDictionaryRef options = CFDictionaryCreate(NULL, keys, values, 1,
+		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	bool trusted = AXIsProcessTrustedWithOptions(options);
+	CFRelease(options);
+	return trusted;
+}
+
 // postKey posts a key down or up event for a macOS virtual key code, carrying
 // the modifiers held down.
 static bool postKey(CGKeyCode code, bool down, CGEventFlags flags) {
@@ -60,6 +73,13 @@ var errNoAccessibility = errors.New("macOS drops emulated key events until deckm
 // accessibilityTrusted reports whether macOS lets deckmaster post key events.
 func accessibilityTrusted() bool {
 	return C.AXIsProcessTrusted() != 0
+}
+
+// requestAccessibility is accessibilityTrusted, except that an untrusted
+// deckmaster also gets listed under Accessibility, so granting it is one
+// switch instead of hunting down the binary's path.
+func requestAccessibility() bool {
+	return bool(C.requestAccessibility())
 }
 
 // cgKeyboard emulates key presses by posting CoreGraphics events for the evdev
