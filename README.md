@@ -132,16 +132,19 @@ can't drive the deck at the same time.
 
 `keycode` and `paste` actions post keyboard events, which macOS drops until
 deckmaster is allowed in System Settings → Privacy & Security → Accessibility.
-deckmaster logs a warning at startup while that permission is missing, and
-another line for every key it can't post. The permission belongs to the
+When that permission is missing, deckmaster asks for it at startup: macOS adds
+deckmaster to the Accessibility list, switched off, and offers to open the
+list. Until you switch it on, deckmaster logs a warning at startup and another
+line for every key it can't post. The permission belongs to the
 process macOS holds responsible: the terminal app when you start deckmaster
 from a terminal, and the deckmaster binary itself when a launchd agent starts
 it.
 
 macOS ties the grant to that exact binary, so every rebuild loses it, and a
 Nix rebuild also moves the binary to a new store path. After each rebuild,
-remove the old entry from the Accessibility list and add the new binary, whose
-path `readlink -f "$(command -v deckmaster)"` prints.
+remove every deckmaster entry from the Accessibility list, restart deckmaster,
+and switch on the entry it adds. Removing the old entries first keeps you from
+switching on a stale one, since they all show the same name.
 
 A few things work differently on macOS:
 
